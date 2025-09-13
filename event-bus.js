@@ -1,5 +1,7 @@
 const EventEmitter = require('events');
 const db = require('./database.js'); //for logging events
+const { v4: uuidv4 } = require('uuid'); 
+const DomainEvent = require('./domain-event.js'); 
 
 // --- (Optional) Schema Validation Dependencies ---
 // Uncomment these lines to enable schema validation.
@@ -38,7 +40,7 @@ class EventBusWrapper {
         if (prop === 'emit') {
           // We return a new function that wraps the original 'emit'.
           // This allows us to inject our validation logic before the event is published.
-          return async (eventType, eventPayload) => {
+          return async (event) => {
             
             // --- SCHEMA VALIDATION LOGIC (currently commented out) ---
             // This is where the schema validation would be enforced. It ensures that
@@ -58,25 +60,27 @@ class EventBusWrapper {
               // We directly call the original method on the native EventEmitter
               // to bypass our own proxy and avoid the logging/kafked logic.
               // Consumers who need speed over guarantee can subscribe to this.
-              originalMethod.call(target.eventBus, eventType, eventPayload);
+              originalMethod.call(target.eventBus, event.type, event);
 
               // STEP 1: Await persistence to the Event Store. This guarantees the event is logged.
-              const { eventId } = await db.logEvent(eventType, eventPayload);
-              console.log(`[Kafky-EventBus] Event '${eventType}' persisted with log ID: ${eventId}`);
+              const { eventId: logId } = await db.logEvent(event);
+              console.log(`[Kafky-EventBus] Event '${event.type}' persisted with log ID: ${logId}`);
 
               // STEP 2: Create a new, derived event name and enrich the payload.
               // The "-KAFKED" suffix is a convention signifying that this event is now
               // immutable, persisted, and safe for consumers to process.
-              const newEventType = eventType + '-KAFKED';
-              const enrichedPayload = { ...eventPayload, logId: eventId };
+              const newEventType = event.type + '-KAFKED';
+              //const enrichedPayload = { ...eventPayload, logId: eventId };
+
+              event.metadata.logId = logId; 
 
               // STEP 3: Publish the enriched, guaranteed event.
               // We call the original 'emit' method to avoid an infinite logging loop.
               // Consumers subscribe to the "-KAFKED" version, ensuring they only act
               // on events that have been successfully persisted.
-              originalMethod.call(target.eventBus, newEventType, enrichedPayload);
+              originalMethod.call(target.eventBus, newEventType, event);
             } catch (error) {
-              console.error(`[Kafky-EventBus] CRITICAL: Failed to log and publish event '${eventType}'. Event lost.`, error);
+              console.error(`[Kafky-EventBus] CRITICAL: Failed to log and publish event '${event.type}'. Event lost.`, error);
               // ARCHITECTURAL NOTE on Resilient Error Handling (Compensation Sagas):
               // In a distributed system, handling critical failures like this requires a
               // "Compensation" workflow, often orchestrated via a Saga pattern. The goal

@@ -1,5 +1,6 @@
 // dispatcher.js - Manages WebSocket room subscriptions and message broadcasting.
 const eventBus = require('./event-bus.js');
+const DomainEvent = require('./domain-event.js');
 
 /**
  * Handles the logic of distributing real-time messages to the correct clients.
@@ -26,9 +27,26 @@ class ChatDispatcher {
         // Since dispatching is a non-critical notification and doesn't alter state,
         // we prioritize a lower latency for the end-user over the absolute guarantee
         // of logging the projection event itself before notifying.
-        eventBus.on('message-projected', (newMessage) => {
+        eventBus.on('message-projected', (projectedEvent) => {
             console.log(`[Dispatcher] 'message-projected' event received. Dispatching message...`);
-            this.dispatch(newMessage.id_chat, newMessage);
+
+            const { payload, metadata } = projectedEvent;
+            this.dispatch(payload.id_chat, payload);
+
+            //We send an event to comunicate a message has been dispatched
+            const dispatchedEvent = new DomainEvent(
+                'message-dispatched',
+                { 
+                    dispatchedMessage: payload,
+                    targetChatId: payload.id_chat,
+                },
+                {
+                    correlationId: metadata.correlationId,
+                    causationId: projectedEvent.eventId
+                }
+            );
+
+            eventBus.emit(dispatchedEvent);
         });
     }
     

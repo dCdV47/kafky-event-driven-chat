@@ -95,16 +95,16 @@ function addMessage(chatId, userId, message) {
  * @param {object} payload - The data associated with the event, which will be serialized to JSON.
  * @returns {Promise<{eventId: number}>} A promise that resolves with the ID of the newly created event log entry.
  */
-function logEvent(eventType, payload) {
+function logEvent(event) {
     return new Promise((resolve, reject) => {
         const sql = "INSERT INTO event_log (event_type, payload) VALUES (?, ?)";
 
-        // The payload object is stringified to be stored in a single TEXT column.
-        const payloadJson = JSON.stringify(payload);
+        // The event object is stringified to be stored in a single TEXT column called "payload".
+        const eventJson = JSON.stringify(event);
         
-        db.run(sql, [eventType, payloadJson], function(err) {
+        db.run(sql, [event.type, eventJson], function(err) {
             if (err) {
-                console.error(`Error logging event '${eventType}':`, err);
+                console.error(`Error logging event '${event.type}':`, err);
                 // In a production system, a failed event log could trigger a critical alert.
                 return reject(err);
             }
@@ -129,9 +129,8 @@ function getEventByLogId(logId) {
                 return reject(err);
             }
             if (row) {
-                // The payload is saved as a string, so we convert it to Object
-                row.payload = JSON.parse(row.payload);
-                resolve(row);
+                // The whole event (eventId, type, payload, metadata...) is saved as a string in the column "payload", so we convert it to Object
+                resolve(JSON.parse(row.payload));
             } else {
                 resolve(null); // Event not found
             }

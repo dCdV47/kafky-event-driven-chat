@@ -17,6 +17,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
+// --- Events Object ---
+const { v4: uuidv4 } = require('uuid'); 
+const DomainEvent = require('./domain-event.js'); 
+
 // --- Real-time Core Logic ---
 
 // Manages all active WebSocket connections, mapping a userId to an array of their sockets.
@@ -43,7 +47,7 @@ dispatcher.listen();
 persistenceService.listen();
 
 
-// ARCHITECTURAL TODO - Centralized Logging:
+// ARCHITECTURAL TO-DO - Centralized Logging:
 // Currently, logging is performed via direct `console.log` calls scattered across services.
 // A more robust approach would be to implement a dedicated, event-driven LoggingService:
 //
@@ -77,6 +81,8 @@ wss.on('connection', (ws) => {
 
     // Fired every time this specific client sends data.
     ws.on('message', async (message) => {
+        const correlationId = uuidv4(); //generate a unique Correlation ID for this new interaction
+
         try {
             const data = JSON.parse(message);
             console.log(`[Gateway] Received event '${data.type}' from user: ${ws.userId || '(unidentified)'}`);
@@ -152,8 +158,15 @@ wss.on('connection', (ws) => {
                     
                     // 2. Publish: Emit a high-level event to the bus. This is a "fire-and-forget" action.
                     // The gateway doesn't know who will handle it (e.g., persistence, dispatching). This decouples the modules.
-                    console.log(`[Gateway] Publishing 'incoming-message' event.`);
-                    eventBus.emit('incoming-message', { chatId, userId: ws.userId, messageText });
+                    console.log(`[Gateway] Publishing 'incoming-message' event. CorrelationID: ${correlationId}`);
+
+                    const incomingMessageEvent = new DomainEvent(
+                        'incoming-message',
+                        { chatId, userId: ws.userId, messageText },
+                        { correlationId }                          
+                    );
+
+                    eventBus.emit(incomingMessageEvent);
                     break;
             }
         } catch (error) {
