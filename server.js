@@ -6,7 +6,8 @@ const path = require('path');
 
 // --- Internal Application Modules ---
 const db = require('./database.js');
-const eventBus = require('./event-bus.js');
+
+const eventBus = require('./event-bus.js'); //it's global for all the services. The must use "eventBus" to interact with it and do not declare variables with this name.
 
 // --- Server Setup ---
 const app = express();
@@ -32,8 +33,8 @@ const clients = new Map();
 // This Map instance is injected into the dispatcher to decouple state from logic.
 const chatRooms = new Map();
 
-// Import the service class and create a single instance (singleton pattern),
-// injecting its dependencies.
+// Import the service class and create a single instance injecting its dependencies
+// the chatRooms and the users
 const ChatDispatcher = require('./dispatcher.js');
 const dispatcher = new ChatDispatcher(chatRooms, clients);
 
@@ -42,7 +43,6 @@ const persistenceService = new PersistenceService(db);
 
 // --- Application Wiring ---
 // Initialize services that listen to the event bus.
-// This decouples them from the main WebSocket gateway logic.
 dispatcher.listen();
 persistenceService.listen();
 
@@ -58,21 +58,20 @@ persistenceService.listen();
 // 4. This service would be the single source of truth for log formatting and output
 //    (e.g., writing to the console, a JSON log file, or an external logging provider).
 //
-// This decouples logging from business logic, making it consistent and easily configurable.
 
 
 
 wss.on('connection', (ws) => {
     console.log('[Gateway] Client connected to WebSocket.');
 
-    // This variable lives within the connection's closure, making it private to the gateway.
+    // These variables lives within the connection's closure, making it private to the gateway.
+    //let currentChatId = null; 
+    //let userId = null;
+
     // ARCHITECTURAL NOTE: A cleaner pattern would be to attach state directly to the `ws` object
-    // Note: not needed anymore, the dispatcher will handle it
     // Attach state directly to the socket instance for easier tracking and cleanup.
     // This treats the socket as the state container for the
     // connection and allows any service receiving the `ws` object to access its context.
-    let currentChatId = null; 
-    let userId = null;
 
     // => like this
     ws.userId = null; // Tracks the authenticated user for this specific connection.
@@ -106,11 +105,10 @@ wss.on('connection', (ws) => {
                     //    in the payload, obtained after a secure login via HTTPS, as "user.identify".
                     // 2. An 'WebSocketAuthService' would receive this event. It would validate the token's
                     //    signature and check its expiration.
-                    // 3. If valid, extract the userId and attach it to the socket (e.g., `ws.userId = userId`).
+                    // 3. If valid, extract the userId and attach it to the socket (e.g., `ws.userId = userId`) or emit an event to be handled by the Gateway
                     // 4. If invalid, the 'WebSocketAuthService' itself would send an 'auth.failed' message
                     //    back to the client and immediately terminate the connection (`ws.close()`).
                     //
-                    // This keeps the Gateway simple and the authentication logic cohesiv
 
                     // For this prototype, we are TRUSTING the client-sent userId for simplicity.
                     
@@ -136,26 +134,29 @@ wss.on('connection', (ws) => {
 
                     // Avoid to open a new socket for the same chat if this client have it opened
                     const userConnections = clients.get(ws.userId);
+                    
+                    // Check if there's another tab of the user with the same chat.
                     const openChatSocket = userConnections.find(
                         existingSocket => existingSocket !== ws && existingSocket.chatId === requestedChatId
                     );
                     
+                    // TO-DO: refactor this to logic to "function closeOldChat(openChatSocket, correlationId)"
                     if (openChatSocket) {
                         console.error(`[Gateway] Closing other old tab. User ${ws.userId} already had an open tab with the chat ${requestedChatId}.`);                       
 
-                        // We send an event so other services can handle the closed connection 
+                        // We create an event so other services can handle the closed connection 
                         const chatClosedEvent = new DomainEvent(
                             'chat-revoked-by-new-tab',
                             { userId: openChatSocket.userId, chatId: openChatSocket.chatId, socket: openChatSocket },
                             { correlationId: correlationId, causationId: "user-interaction" }                          
                         );
 
-                        openChatSocket.chatId = null; //we clean the chat from the socket
+                        openChatSocket.chatId = null; //we clean the chat from the old socket
                         eventBus.emit(chatClosedEvent); //we emit the event so other service (as the Dispatchet) can handle it
                         
                         // Notify the client
                         openChatSocket.send(JSON.stringify({
-                            type: 'chat.session.revoked',
+                            type: 'chat.session.revoked', //the frontend will handle this event type
                             payload: { message: 'The chat session is now active in another tab.' }
                         }));
                     }
@@ -164,15 +165,18 @@ wss.on('connection', (ws) => {
                     participants = await db.getChatParticipants(requestedChatId);
                     if (!participants || (ws.userId !== participants.id_user1 && ws.userId !== participants.id_user2)) {
                         console.error(`[Gateway] SECURITY ALERT: User ${ws.userId} attempted to post in chat ${requestedChatId} without permission.`);
-                        return; // Halt execution.
+                        return; 
                     }
 
-                    ws.chatId = requestedChatId; //set the chatId for the socket 
+                    ws.chatId = requestedChatId; //AUTHORIZED - set the chatId for the socket 
+
+
+                    // After the authorization, we send an event                     
+                    // Other services will send the chat messages and needed information to the user
 
                     // Retrieve the last message found in the user IndexedDB
                     const lastMessageId = data.payload.lastMessageId || 0;
 
-                    // After the authorization, we send an event to be handled by other services
                     const chatSelectedEvent = new DomainEvent(
                         'chat-selected-by-user',
                         { userId: ws.userId, chatId: ws.chatId, socket: ws, lastMessageId: lastMessageId },
@@ -220,7 +224,7 @@ wss.on('connection', (ws) => {
 
         // 2. Handle this gateway's direct responsibility: cleaning up the `clients` map.
         const userConnections = clients.get(closingUserId);
-        if (!Array.isArray(userConnections)) return;
+        if (!Array.isArray(userConnections)) return; //si no está el usaurio, en el mapa, hemos acabado
 
         // Remove the specific socket that just closed from the user's connection list.
         const remainingConnections = userConnections.filter(socket => socket !== ws);
@@ -236,6 +240,7 @@ wss.on('connection', (ws) => {
         }
 
         // We send an event so other services can handle the closed connection 
+        // Dispatcher will clean up the user from the chatRoom
         const socketClosedEvent = new DomainEvent(
             'connection-closed',
             { userId: closingUserId, chatId: closingChatId, socket: ws },

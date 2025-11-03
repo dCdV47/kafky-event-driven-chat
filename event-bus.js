@@ -15,6 +15,7 @@ const DomainEvent = require('./domain-event.js');
  *              guaranteed event persistence, creating a foundational "Event Store".
  *              This class uses the Proxy pattern to intercept the 'emit' method,
  *              persisting events before they are published to consumers.
+ *              It performors "double emit": "eager/optimistic emit" and "kafked/logged emit"
  */
 class EventBusWrapper {
   constructor(eventEmitterInstance) {
@@ -36,13 +37,22 @@ class EventBusWrapper {
         // Otherwise, delegate the call to the original EventEmitter instance.
         const originalMethod = target.eventBus[prop];
 
-        // --- ENHANCEMENT: Intercept the 'emit' method ---
+        // If it's not a function, just return the property.
+        if (typeof originalMethod !== 'function') return originalMethod;          
+
+        // If its not "emit":
+        // For any other method (like 'on', 'once', etc.), we need to ensure the `this` context is correct.
+        // If the property is a function, we bind it to the original EventEmitter instance.
+        if (prop !== 'emit') return originalMethod.bind(target.eventBus);
+
+        // --- Intercept the 'emit' method ---
         if (prop === 'emit') {
           // We return a new function that wraps the original 'emit'.
           // This allows us to inject our validation logic before the event is published.
           return async (event) => {
             
-            // --- SCHEMA VALIDATION LOGIC (currently commented out) ---
+            // TO-DO
+            // --- SCHEMA VALIDATION LOGIC --
             // This is where the schema validation would be enforced. It ensures that
             // every event published to the bus conforms to a predefined structure,
             // preventing bugs caused by malformed event data.
@@ -69,19 +79,21 @@ class EventBusWrapper {
               // STEP 2: Create a new, derived event name and enrich the payload.
               // The "-KAFKED" suffix is a convention signifying that this event is now
               // immutable, persisted, and safe for consumers to process.
-              const newEventType = event.type + '-KAFKED';
-              //const enrichedPayload = { ...eventPayload, logId: eventId };
+              // Note: consumers preferably should suscribe to "-KAFKED" events
+              const kafkedEventName = event.type + '-KAFKED';
 
-              event.metadata.logId = logId; 
-
+              event.metadata.logId = logId; //we add the logId with which the DB has saved it
+              event.type = kafkedEventName; //We modify the type of our event because now it's -KAFKED 
+              
               // STEP 3: Publish the enriched, guaranteed event.
               // We call the original 'emit' method to avoid an infinite logging loop.
               // Consumers subscribe to the "-KAFKED" version, ensuring they only act
               // on events that have been successfully persisted.
-              originalMethod.call(target.eventBus, newEventType, event);
+              originalMethod.call(target.eventBus, kafkedEventName, event);
             } catch (error) {
               console.error(`[Kafky-EventBus] CRITICAL: Failed to log and publish event '${event.type}'. Event lost.`, error);
-              // ARCHITECTURAL NOTE on Resilient Error Handling (Compensation Sagas):
+              // ARCHITECTURAL NOTE
+              // On Resilient Error Handling (Compensation Sagas):
               // In a distributed system, handling critical failures like this requires a
               // "Compensation" workflow, often orchestrated via a Saga pattern. The goal
               // is to maintain data consistency by undoing previous steps in a business process.
@@ -91,7 +103,7 @@ class EventBusWrapper {
               //    auditing and potential manual replay by an engineer.
 
               // 2. FAILURE EVENT CHAIN: The EventBus emits a specific failure event,
-              //    e.g., `${eventType}-PERSISTENCE_FAILED`. This event must carry a
+              //    e.g., `${eventType}-PERSISTENCE_FAILED`. This event must carry the
               //    `correlationId` that traces back to the original user request.
 
               // 3. CHOREOGRAPHED ROLLBACK: Services involved in the original process subscribe
@@ -108,14 +120,6 @@ class EventBusWrapper {
             };
           }
         }
-
-        // For any other method (like 'on', 'once', etc.), we need to ensure the `this` context is correct.
-        // If the property is a function, we bind it to the original EventEmitter instance.
-        if (typeof originalMethod === 'function') {
-            return originalMethod.bind(target.eventBus);
-        }
-        // If it's not a function, just return the property.
-        return originalMethod;
       }
     });
   }

@@ -15,7 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tabChannel.onmessage = (event) => {
         const { type, chatId, userId: senderUserId, tabId: senderTabId} = event.data;
 
-        // Ensure the message is a 'TAKE_CONTROL' command and it's from the user in another tab
+        // Ensure the message is a 'TAKE_CONTROL' command and it's from the same user in another tab
         if (type === 'TAKE_CONTROL' && senderUserId === state.currentUser?.id && senderTabId !== tabId) {
             
             // Check if the takeover request is for the chat currently active in this tab.
@@ -191,7 +191,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // ================================================================
 
     // 1. Handle incoming server events
-    ws.onmessage = async (event) => {
+    ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         console.log('Server event received:', data);
 
@@ -200,16 +200,22 @@ document.addEventListener('DOMContentLoaded', () => {
             case 'chat.history':
                 // Server sends NEW messages we didn't have locally.
                 if (data.payload && data.payload.length > 0) {
-                    await saveMessagesToDB(data.payload); // Persist them locally.
+                    //await saveMessagesToDB(data.payload); // Persist them locally. We don't need to wait for this, it's better to optimize the user experience and leave this task running in the backgound.
+                    
                     state.messages.push(...data.payload); // Add them to the current state.
                     renderMessages();                     // Re-render the UI.
+
+                    // we save the messages in the IndexedDB in the background
+                    saveMessagesToDB([data.payload])
+                        .catch(err => {
+                            console.error("Failed to save history in the IndexedDB:", err);
+                        });
                 }
                 break;
             
             case 'chat.message.broadcast':
                 // Server broadcasts a single new message to participants.
                 if (state.currentChat && data.payload.id_chat === state.currentChat.id) {
-                    await saveMessagesToDB([data.payload]); // Persist the new message.
                     state.messages.push(data.payload);      // Add it to the current state.
                     renderMessages();                       // Re-render the UI.
 
@@ -218,6 +224,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         state.unreadMessagesCount++;
                         updateTitleWithUnreadCount();
                     }
+
+                    // we save the messages in the IndexedDB in the background
+                    saveMessagesToDB([data.payload])
+                        .catch(err => {
+                            console.error("Failed to save history in the IndexedDB:", err);
+                        });
                 }
                 break;
             

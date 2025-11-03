@@ -63,19 +63,21 @@ class ChatDispatcher {
 
             this.subscribe(socket, chatId);
 
+            // TO-DO DECOUPLING:
             // We get the history (this could instead trigger an event "history-requested" to be handle by other service
             // and only send the history when a "history-ready" event is published
             const history = await db.getChatHistory(chatId, lastMessageId);
 
             // If there are new messages, we send them
             if (history.length > 0) {
-                 console.log(`[Dispatcher] Sending ${history.length} new messages to user ${userId} for chat ${chatId}.`);
-                 socket.send(JSON.stringify({ type: 'chat.history', payload: history }));
+                console.log(`[Dispatcher] Sending ${history.length} new messages to user ${userId} for chat ${chatId}.`);
+                socket.send(JSON.stringify({ type: 'chat.history', payload: history }));
             } else {
-                 console.log(`[Dispatcher] User ${userId} is already up to date for chat ${chatId}.`);
+                console.log(`[Dispatcher] User ${userId} is already up to date for chat ${chatId}.`);
             }
 
             //We send an event to comunicate the user is now in the room
+            //NOTE: currently no service is suscribed to this event
             const userInRoomEvent = new DomainEvent(
                 'user-in-room',
                 { 

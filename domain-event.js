@@ -4,7 +4,9 @@ const { v4: uuidv4 } = require('uuid');
  * @class DomainEvent
  * @description Represents an immutable fact that has occurred in the system.
  * It is the fundamental unit of communication in an event-driven architecture.
- */
+ * 
+ * TO-DO: implement its mandatory use in the architecture, validating it in the proxy
+ * */
 class DomainEvent {
     /**
      * @param {string} type - The name of the event (e.g., 'incoming-message').
