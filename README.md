@@ -26,6 +26,7 @@ The purpose is to serve as a practical and educational example for understanding
 The flow of a message, from the moment it is sent until it is received, follows this path, showcasing the interaction between the components and the persistence layers.
 
 ```mermaid
+%%{init: {"theme": "dark", "themeVariables": { "primaryColor": "#1e1e1e", "fontSize": "14px", "fontFamily": "Inter" }}}%%
 sequenceDiagram
     participant Frontend
     participant IndexedDB
@@ -36,34 +37,41 @@ sequenceDiagram
     participant EventStore
     participant ReadModel
 
-    Frontend->>Gateway: Sends 'chat.message.new' event
+    
+    rect rgba(15, 47, 2, 0.7)
+    Frontend->>Gateway: User sends a message and Frontend sends the 'chat.message.new' event
+    end   
 
-    rect rgb(240, 248, 255)
+    %% A dark, semi-transparent blue background color %%
+    rect rgba(28, 44, 73, 0.7)
     note over Gateway,EventStore: 🧠 Backend Event Flow
-    Gateway->>EventBus: 0. Publishes 'incoming-message' event on the EventBus
-    EventBus-->>EventBus: 1. (OPTIMISTIC EVENT) Notifies 'incoming-message' (no one is listening)
-    EventBus->>EventStore: 2. Saves 'incoming-message' to the EventStore ('event_log' table)
-    EventBus-->>EventBus: 3. (GUARANTEED EVENT) After saving, notifies 'incoming-message-KAFKED'
+    Gateway->>EventBus: 0. Publishes the 'incoming-message' event to the EventBus
+    EventBus-->>EventBus: 1. (OPTIMISTIC EVENT) Notifies 'incoming-message' (nobody is listening)
+    EventBus->>EventStore: 2. Saves 'incoming-message' in the EventStore ('event_log' table)
+    EventBus-->>EventBus: 3. (GUARANTEED EVENT) After saving it, notifies 'incoming-message-KAFKED'
     
     EventBus->>PersistenceService: 4. PersistenceService listens for 'incoming-message-KAFKED'
     PersistenceService-->>EventStore: 5. Retrieves the event directly from the EventStore (single source of truth)
     EventStore-->>PersistenceService:
-    PersistenceService->>ReadModel: 6. Projects and persists the content of the retrieved event into the ReadModel ('messages' table)
-    PersistenceService->>EventBus: 7. After persisting, publishes 'message-projected' on the EventBus
+    PersistenceService->>ReadModel: 6. Projects and persists the content of the retrieved event in the ReadModel ('messages' table)
+    PersistenceService->>EventBus: 7. After it's persisted, publishes 'message-projected' to the EventBus
 
     EventBus-->>DispatcherService: 8. (OPTIMISTIC EVENT) Notifies 'message-projected' before saving it to the EventStore
     DispatcherService->>Frontend: 9. Listens for 'message-projected' and broadcasts the message to the recipient without waiting for the guaranteed 'message-projected-KAFKED' event
     end
 
-    rect rgb(255, 250, 240)
+    %% A dark, semi-transparent yellow/ochre background color %%
+    rect rgba(87, 72, 34, 0.7)
     note over Frontend,IndexedDB: 💫 Frontend Optimistic Update
     Frontend->>Frontend: 1. Renders the message in the UI instantly
-    Frontend->>IndexedDB: 2. Then saves the message in the background
+    Frontend->>IndexedDB: 2. Saves the message in the background
     end
 ```
 
 *Note: The EventBus intercepts published events and ALWAYS notifies with a **Double-Emit**:
+
 **Eager Emit**: When the event is published (OPTIMISTIC EVENT)
+
 **Kafked Emit**: After the event has been saved in the EventStore (GUARANTEED EVENT)
 
 ### ✨ Subscription Strategy: Speed vs. Reliability
